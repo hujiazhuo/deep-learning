@@ -1,0 +1,149 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.nn.functional as F     #偏向于辅助函数，卷积、池化、激活这种
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms, datasets, models
+
+import torchvision.transforms.functional as TF
+
+from sklearn.model_selection import train_test_split
+
+import os
+
+# 设定文件夹路径和初始编号
+folder_path = "./test1/animals"  # 修改成你的文件夹路径
+start_num = 1
+# 获取文件夹中所有文件的名称
+file_names = os.listdir(folder_path)
+# 循环遍历每个文件，按顺序重命名
+for file_name in file_names:
+    # 构造新的文件名，使用0填充编号
+    new_file_name = str(start_num).zfill(5) + file_name[-4:]
+    # 拼接旧文件名和新文件名的完整路径，并重命名
+    old_file_path = os.path.join(folder_path, file_name)
+    new_file_path = os.path.join(folder_path, new_file_name)
+    os.rename(old_file_path, new_file_path)
+
+    # 增加编号
+    start_num += 1
+
+
+data_transform = transforms.Compose([
+    transforms.Resize(84),
+    transforms.CenterCrop(84),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+train_dataset = datasets.ImageFolder(root='./train/',
+                                     transform=data_transform)
+
+test_data = datasets.ImageFolder(root='./test1/',
+                                     transform=data_transform)
+# print(test_data[0])
+print(train_dataset.classes)
+print(train_dataset.class_to_idx)
+# train_data, val_data, train_labels, val_labels = train_test_split(train_dataset, test_size=0.2, shuffle=True)
+
+batch_size=2048
+train_loader = torch.utils.data.DataLoader(train_dataset,
+                                           batch_size=batch_size,
+                                           shuffle=True,
+                                           )
+
+test_loader = torch.utils.data.DataLoader(test_data,
+                                           batch_size=batch_size,
+                                           shuffle=False,
+                                           )
+# 创建模型
+
+
+
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.maxpool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.maxpool = nn.MaxPool2d(2, 2)
+
+        self.linear1 = nn.Linear(16 * 18 * 18, 1024)
+        self.linear2 = nn.Linear(1024, 512)
+        self.linear3 = nn.Linear(512, 2)
+
+    def forward(self, x):
+        x = self.maxpool(F.relu(self.conv1(x)))
+        x = self.maxpool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 18 * 18)
+        x = F.relu(self.linear1(x))
+        x = F.relu(self.linear2(x))
+        x = self.linear3(x)
+
+        return x
+
+model = Net()
+
+# 定义loss和optimizer
+criterion = nn.CrossEntropyLoss()
+# 定义优化器
+learning_rate=0.001  #自己定义
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+
+def train(model,train_loader,num_epochs):
+    for epoch in range(num_epochs):
+        loss=0
+        for index, data in enumerate(train_loader):
+            # 在这里执行你的训练操作
+            # batch_inputs 是一个包含输入张量的批次
+            # batch_labels 是一个包含标签张量的批次
+            X_train ,Y_train = data
+            outputs = model(X_train)  # 前向传
+            loss = criterion(outputs, Y_train)  # 计算损失
+            optimizer.zero_grad()  # 梯度清零
+            loss.backward()  # 反向传播
+            optimizer.step()# 梯度更新
+
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')
+    # 保存模型的路径
+    PATH = "model.pth"
+    # 保存整个模型
+    torch.save(model, PATH)
+
+#
+# train(model,train_loader,10)
+
+pred=[]
+def predict(model,test_loader):
+    model=torch.load('model.pth')
+    for index, data in enumerate(test_loader):
+        test_data, test_y = data
+        outputs = model(test_data)
+        _, predicted = torch.max(outputs, 1)  # 获取预测类别索引
+        pred.extend(predicted.tolist())  # 将预测类别索引转为 Python list 并添加到 pred 列表中
+    print(pred[0:20])
+
+
+predict(model,test_loader)
+
+
+
+
+
+# def vertify(model)
+# model.load_state_dict(torch.load('model.pth'))
+# model.eval()  # 设置为评估模式
+# 在这里编写你的代码，使用加载的模型进行预测或其他操作
+
+# #对预测值进行处理
+# preds = model().detach().numpy()
+# # 选择最大概率的整数
+# results = np.argmax(preds,axis = 1)
+# preds1=pd.DataFrame(results)
+# preds1.rename(columns={0:'Label'},inplace=True)
+# print(preds1.head(3))
