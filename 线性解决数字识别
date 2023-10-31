@@ -1,0 +1,114 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+
+#设置pandas查看数据时内容不重叠成...
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+
+"""读取训练集"""
+train_data = pd.read_csv("train.csv")
+
+"""读取测试集"""
+test_data = pd.read_csv("test.csv")
+
+# print(train_data.isnull().any().describe())
+# print(test_data.isnull().any().describe())
+
+X_train =train_data.drop(labels='label',axis=1)   #删除标签为label的列
+print(X_train.shape)
+Y_train =train_data['label']
+print(Y_train.shape)
+
+# print(X_train.head(1))
+print(Y_train.head(5))
+
+#归一化
+X_train=X_train/255.0
+test_data=test_data/255.0
+
+X_train = X_train.values.reshape(-1,28,28,1)  #.values的作用是把数据从Dataframe类型格式转为pandas数组格式
+test_data = test_data.values.reshape(-1,28,28,1)
+#查看图片数字
+first=plt.imshow(X_train[1][:,:,0])
+plt.show()
+
+Y_train=torch.from_numpy(Y_train.copy().values)
+#-----------------------------------------------------------------------
+"""构建模型"""
+
+X_train_tensor= torch.from_numpy(X_train).float()
+test_data_tensor= torch.from_numpy(test_data).float()
+class Net(nn.Module):
+    def __init__(self):
+        super(Net,self).__init__()
+        self.linear = nn.Linear(28 * 28, 100)
+        self.relu = nn.ReLU()  # 添加ReLU激活函数     可以在此添加激活函数，也可以在forword里面用F.relu(self.linear(x))
+        self.linear2 = nn.Linear(100, 10)  # 添加第二层线性变换  10个输出表示每个数字的概率（权重）
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)  # 展平输入图像
+        x = self.linear(x)  # 进行线性变换
+        x = self.relu(x)  # ReLU激活函数
+        x = self.linear2(x)  # 第二层线性变换
+        return x
+
+
+
+# 初始化模型
+model = Net()
+
+# 定义损失函数
+criterion = nn.CrossEntropyLoss()     #交叉熵损失函数，其中包含了softmax操作
+
+# 定义优化器
+learning_rate=0.01  #自己定义
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+# 迭代100次
+num_epochs =300
+for epoch in range(num_epochs):
+    outputs = model(X_train_tensor)  # 前向传
+    loss = criterion(outputs, Y_train)  # 计算损失
+    optimizer.zero_grad()  # 梯度清零
+    loss.backward()  # 反向传播
+    optimizer.step()# 梯度更新
+
+    if (epoch + 1) % 10 == 0:
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+
+# 保存模型的路径
+PATH = "model.pth"
+# 保存整个模型
+torch.save(model, PATH)
+
+#对预测值进行处理
+preds = model(test_data_tensor).detach().numpy()
+# print(preds[0:5])
+# 选择最大概率的整数
+results = np.argmax(preds,axis = 1)
+
+preds1=pd.DataFrame(results)
+preds1.rename(columns={0:'Label'},inplace=True)
+
+num=np.arange(1, len(preds)+1)
+print(num)
+# 添加新列
+preds1.insert(0, 'ImageId',num)
+print(preds1.head(3))
+preds1.to_csv('submission3.csv',index=False)
+
+# submission['ImageId']=submission['ImageId'].astype(int)
+#
+# submission.to_csv('submission1.csv',index=False)
+# a=plt.imshow(test_data[0][:,:,0])
+# plt.show()
+# b=plt.imshow(test_data[1][:,:,0])
+# plt.show()
+# c=plt.imshow(test_data[2][:,:,0])
+# plt.show()
