@@ -1,0 +1,226 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, random_split, DataLoader
+from torchvision import transforms, datasets, models
+import torchvision.transforms.functional as F
+import copy
+#设置pandas查看数据时内容不重叠成...
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+
+# """读取训练集和测试集"""
+train_data = pd.read_csv("train.csv")
+test_data = pd.read_csv("test.csv")
+nums = np.arange(1, len(test_data) + 1)
+# print(num)
+# 添加新列
+test_data.insert(0, 'ImageId', nums)
+# print(test_data.head(5))
+
+class CustomDataset(Dataset):
+    def __init__(self, data, transform=None):
+        self.data = data
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        label = self.data.iloc[idx, 0]
+        image = self.data.iloc[idx, 1:].values.astype('float32').reshape(1, 28, 28) / 255.0
+        if self.transform:
+            image = self.transform(image)
+
+        return image, label
+
+
+# 定义数据转换
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,))
+])
+
+# 创建训练集和验证集的数据集对象
+train_dataset = CustomDataset(train_data, transform=transform)
+test_dataset = CustomDataset(test_data, transform=transform)
+
+
+# 将训练集划分为训练集和验证集
+val_size = int(len(train_dataset) * 0.2)  # 验证集大小为总数据集的20%
+train_dataset, val_dataset = random_split(train_dataset, [len(train_dataset) - val_size, val_size])
+
+# 创建训练集和验证集的数据加载器
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+# test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+
+# 将所有图像一次性转换为 Tensor
+data_tensor = torch.stack([test_dataset[i][0] for i in range(len(test_dataset))])
+
+# 打印数据 Tensor 的形状
+print(data_tensor.shape)
+#-----------------------------------------------------------------------------------------------------
+"""构建模型"""
+
+#
+
+class Net(nn.Module):
+    def __init__(self):
+        super(Net,self).__init__()
+        self.linear = nn.Linear(28 * 28, 512)
+        self.relu = nn.ReLU()  # 添加ReLU激活函数     可以在此添加激活函数，也可以在forword里面用F.relu(self.linear(x))
+        self.linear2 = nn.Linear(512, 10)  # 添加第二层线性变换  10个输出表示每个数字的概率（权重）
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)  # 展平输入图像
+        x = self.linear(x)  # 进行线性变换
+        x = self.relu(x)  # ReLU激活函数
+        x = self.linear2(x)  # 第二层线性变换
+        return x
+
+# 初始化模型
+model = Net()
+# 定义损失函数
+criterion = nn.CrossEntropyLoss()     #交叉熵损失函数，其中包含了softmax操
+# 定义优化器
+learning_rate=0.001  #自己定义
+weight_decay = 0.001  # 设置权重衰减的参数
+optimizer = optim.Adam(model.parameters(), lr=learning_rate,weight_decay=weight_decay)
+
+
+best_accuracy = 0.0  # 保存最高的验证集准确率
+best_model_params = None  # 保存最佳模型参数
+
+
+def train(model, num_epochs, train_loader, val_loader, best_accuracy, best_model_params):
+    print("开始训练")
+
+    # 用于存储训练过程中的损失和准确率
+    train_losses = []
+    val_accuracies = []
+
+    for epoch in range(num_epochs):
+        print("Epoch {}".format(epoch))
+        epoch_loss = 0
+        for index, (data, label) in enumerate(train_loader):
+            X_train = data
+            Y_train = label
+            outputs = model(X_train)  # 前向传播
+            loss = criterion(outputs, Y_train)  # 计算损失
+            optimizer.zero_grad()  # 梯度清零
+            loss.backward()  # 反向传播
+            optimizer.step()  # 梯度更新
+            epoch_loss += loss.item()
+
+        average_epoch_loss = epoch_loss / len(train_loader)
+        train_losses.append(average_epoch_loss)
+
+        if (epoch + 1) % 1 == 0:
+            print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {average_epoch_loss:.4f}')
+            # 在每个训练周期结束后评估模型
+            val_accuracy = vertify(model, val_loader)
+            val_accuracies.append(val_accuracy)
+
+            if val_accuracy > best_accuracy:
+                best_accuracy = val_accuracy
+                best_model_params = copy.deepcopy(model.state_dict())
+            print(f"Validation Accuracy: {val_accuracy}")
+
+    # 画出损失和准确率的变化图
+    plot_results(train_losses, val_accuracies)
+
+    # 创建一个新的模型对象
+    best_model = Net()
+
+    # 加载最佳模型参数到新的模型对象中
+    best_model.load_state_dict(best_model_params)
+
+    # # 保存模型的路径
+    # PATH = "model5.pth"
+    # # 保存整个模型
+    # torch.save(best_model, PATH)
+
+def vertify(model,val_loader):
+    print("开始验证")
+    correct = 0
+    total = 0
+    with torch.no_grad():  # 关闭梯度计算
+        for index, (data, label) in enumerate(val_loader):
+            X_val = data
+            Y_val = label
+            Y_hat_val=model(X_val)
+            _, predicted = Y_hat_val.max(1)
+            correct += predicted.eq(Y_val).sum().item()
+            # 统计总样本数量
+            total += Y_val.size(0)# 计算平均损失和准确率
+            # avg_val_loss = val_loss / len(val_loader)
+            accuracy = 100.0 * correct / total
+            # accuracy=(torch.argmax(Y_hat_val,dim=1)==Y_val).sum()/len(Y_val)
+
+    return accuracy
+
+#画图
+def plot_results(train_losses, val_accuracies):
+    # 画出训练过程中的损失变化
+    plt.figure(figsize=(10, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(train_losses, label='Training Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training Loss Over Epochs')
+    plt.legend()
+
+    # 画出验证准确率变化
+    plt.subplot(1, 2, 2)
+    plt.plot(val_accuracies, label='Validation Accuracy', color='orange')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.title('Validation Accuracy Over Epochs')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+"""对测试集进行预测"""
+def predict(model,data_tensor):
+    model.eval()  # 设置模型为评估模式
+    model = torch.load('model.pth')
+
+    #对预测值进行处理
+    preds = model(data_tensor).detach().numpy()
+    # print(preds[0:5])
+    # 选择最大概率的整数
+    results = np.argmax(preds,axis = 1)
+    preds1=pd.DataFrame(results)
+    preds1.rename(columns={0:'Label'},inplace=True)
+    num=np.arange(1, len(preds)+1)
+    # print(num)
+    # 添加新列
+    preds1.insert(0, 'ImageId',num)
+    preds1.to_csv('submission8.csv',index=False)
+    print(preds1.head(5))
+#
+train(model,10,train_loader,val_loader,best_accuracy,best_model_params)
+# predict(model,data_tensor)
+#
+
+
+
+# submission['ImageId']=submission['ImageId'].astype(int)
+#
+# submission.to_csv('submission1.csv',index=False)
+# a=plt.imshow(test_data[0][:,:,0])
+# plt.show()
+# b=plt.imshow(test_data[1][:,:,0])
+# plt.show()
+# c=plt.imshow(test_data[2][:,:,0])
+# plt.show()
+# d=plt.imshow(test_data[3][:,:,0])
+# plt.show()
+# e=plt.imshow(test_data[4][:,:,0])
+# plt.show()
